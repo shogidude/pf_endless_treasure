@@ -1,43 +1,41 @@
 #!/usr/bin/env python3
 """
-Endless Treasure Drawer
------------------------
-Drop this script into the folder that contains your Paizo "Deck of Endless Treasure Cards" JPGs
-(files whose names end with numbers 21..220). On launch, it composes a random treasure layout:
+Deck of Endless Treasure — Random Drawer (Display-Fit, No Save)
+----------------------------------------------------------------
+Drop this script into the folder that contains your Paizo JPGs whose filenames
+end in numbers 21..220. On launch, it composes a random treasure layout:
 
-  1) Back card (anchor)
-  2) Back card at (0, +578) relative to the first
-  3) Back card at (-234, +144) relative to the first
-  4) Front card at (0, +144) relative to the first
-  5) A standalone back card cropped to (238, 233) - (738, 575)
+1) Back card (anchor)
+2) Back card at (0, +578) relative to the first
+3) Back card at (-234, +144) relative to the first
+4) Front card at (0, +144) relative to the first
+5) A standalone back card cropped to (238, 233) - (738, 575)
 
-GUI controls:
-  • New Treasure – draws a new random set and re-renders.
-  • Save Image…  – saves the current full-resolution composite as a PNG.
+Changes from previous version:
+- Removed "Save Image..." feature entirely.
+- Display auto-resizes to fit the current window (downscales as needed).
 
 Requires: Python 3.9+ and Pillow 10+   pip install pillow
 """
 
 import os
 import re
-import sys
 import random
-from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 
 from PIL import Image, ImageTk, ImageDraw, ImageFilter
 
-# ---- Constants from your spec ----
+# ---- Card constants from your spec ----
 CARD_W, CARD_H = 744, 1039
 # Relative offsets (x, y) from the first (anchor) card:
 OFF_BACK2 = (0, 578)
 OFF_BACK3 = (-234, 144)
 OFF_FRONT = (0, 144)
 # Crop box for the standalone back card (left, top, right, bottom)
-CROP_BOX = (238, 233, 738, 575)  # yields 500 x 342
+CROP_BOX = (238, 233, 738, 575)  # -> 500 x 342
 
 # ---- Visual polish ----
 BG_COLOR = (16, 59, 44)  # deep felt green
@@ -46,10 +44,6 @@ RIGHT_GAP = 60  # space between the stacked cluster and the cropped panel
 SHADOW_OFFSET = (10, 10)
 SHADOW_BLUR = 10
 SHADOW_ALPHA = 90  # 0..255
-
-# Max displayed size (the saved image is always full resolution)
-DISPLAY_MAX_W = 1480
-DISPLAY_MAX_H = 980
 
 
 def script_dir() -> Path:
@@ -103,12 +97,10 @@ def paste_with_shadow(canvas_img: Image.Image, card_img: Image.Image, xy):
     # Shadow
     shadow = Image.new("RGBA", (CARD_W, CARD_H), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
-    # Rounded rectangle to soften corners a bit
-    radius = 28
+    radius = 28  # rounded corner feel
     sd.rounded_rectangle((0, 0, CARD_W, CARD_H), radius=radius, fill=(0, 0, 0, SHADOW_ALPHA))
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=SHADOW_BLUR))
     canvas_img.alpha_composite(shadow, (x + SHADOW_OFFSET[0], y + SHADOW_OFFSET[1]))
-
     # Card
     canvas_img.alpha_composite(card_img, (x, y))
 
@@ -117,12 +109,10 @@ def compose_treasure(back1: Path, back2: Path, back3: Path, back_for_crop: Path,
     """
     Build the full-resolution composite as an RGBA Pillow image.
     """
-    # Load the chosen images
     def load_card(pth: Path) -> Image.Image:
         im = Image.open(pth).convert("RGBA")
-        # Optional: sanity check dimensions (Paizo spec says 744x1039)
+        # Ensure consistent size
         if im.width != CARD_W or im.height != CARD_H:
-            # If sizes differ, we force-resize to the expected card size for consistent layout
             im = im.resize((CARD_W, CARD_H), Image.LANCZOS)
         return im
 
@@ -131,8 +121,8 @@ def compose_treasure(back1: Path, back2: Path, back3: Path, back_for_crop: Path,
     im_back3 = load_card(back3)
     im_front = load_card(front)
 
-    # Base anchor location chosen so the left-shifted third card still has a margin
-    base_x = OUTER_MARGIN + abs(OFF_BACK3[0])  # ensures leftmost has OUTER_MARGIN
+    # Anchor chosen so left-shifted third card keeps a margin
+    base_x = OUTER_MARGIN + abs(OFF_BACK3[0])  # ensures OUTER_MARGIN at left-most
     base_y = OUTER_MARGIN
 
     # Positions
@@ -151,40 +141,38 @@ def compose_treasure(back1: Path, back2: Path, back3: Path, back_for_crop: Path,
     crop_w = CROP_BOX[2] - CROP_BOX[0]  # 500
     crop_h = CROP_BOX[3] - CROP_BOX[1]  # 342
     panel_x = right + RIGHT_GAP
-    panel_y = OUTER_MARGIN  # top-aligned
+    panel_y = OUTER_MARGIN
 
     # Overall canvas size
     canvas_w = panel_x + crop_w + OUTER_MARGIN
     canvas_h = max(bottom + OUTER_MARGIN, panel_y + crop_h + OUTER_MARGIN)
 
-    # Create background (RGBA so we can alpha_composite shadows/cards cleanly)
+    # Create background
     canvas = Image.new("RGBA", (canvas_w, canvas_h), BG_COLOR + (255,))
 
-    # Place in the specified sequence (z-order == paint order):
+    # Paint sequence (z-order)
     paste_with_shadow(canvas, im_back1, p1)
     paste_with_shadow(canvas, im_back2, p2)
     paste_with_shadow(canvas, im_back3, p3)
     paste_with_shadow(canvas, im_front, p4)
 
-    # Cropped standalone back
+    # Cropped standalone back with subtle mat + shadow
     im_crop_src = load_card(back_for_crop)
     im_crop = im_crop_src.crop(CROP_BOX)
-    # Give the crop a small shadow and a subtle “mat” behind it for polish
     mat_pad = 16
     mat_w, mat_h = im_crop.width + mat_pad * 2, im_crop.height + mat_pad * 2
     mat = Image.new("RGBA", (mat_w, mat_h), (238, 234, 216, 255))  # light parchment tone
-    # Shadow under mat
+
     shadow = Image.new("RGBA", (mat_w, mat_h), (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
     sd.rounded_rectangle((0, 0, mat_w, mat_h), radius=20, fill=(0, 0, 0, SHADOW_ALPHA))
     shadow = shadow.filter(ImageFilter.GaussianBlur(radius=SHADOW_BLUR))
     canvas.alpha_composite(shadow, (panel_x + SHADOW_OFFSET[0], panel_y + SHADOW_OFFSET[1]))
 
-    # Paste mat and crop
     canvas.alpha_composite(mat, (panel_x, panel_y))
     canvas.alpha_composite(im_crop, (panel_x + mat_pad, panel_y + mat_pad))
 
-    return canvas  # RGBA full-res
+    return canvas
 
 
 class TreasureApp(tk.Tk):
@@ -211,6 +199,7 @@ class TreasureApp(tk.Tk):
         self.fullres_image = None       # Pillow Image
         self.tk_image = None            # ImageTk for display
         self.current_files = {}         # record selection for status text
+        self._resize_job = None         # debounce for resize
 
         # Layout
         topbar = ttk.Frame(self)
@@ -221,8 +210,6 @@ class TreasureApp(tk.Tk):
 
         btn_new = ttk.Button(topbar, text="New Treasure", command=self.generate)
         btn_new.pack(side=tk.RIGHT, padx=(8, 0))
-        btn_save = ttk.Button(topbar, text="Save Image…", command=self.save_image)
-        btn_save.pack(side=tk.RIGHT, padx=(8, 0))
 
         # Display area
         self.image_panel = ttk.Label(self)
@@ -230,6 +217,9 @@ class TreasureApp(tk.Tk):
 
         self.status = ttk.Label(self, text="", style="Sub.TLabel")
         self.status.pack(side=tk.BOTTOM, anchor="w", padx=14, pady=(0, 10))
+
+        # Re-render on window resize (debounced)
+        self.bind("<Configure>", self._on_resize)
 
         # Initial checks and first render
         if len(self.backs) < 4 or len(self.fronts) < 1:
@@ -249,7 +239,6 @@ class TreasureApp(tk.Tk):
     def generate(self):
         try:
             backs, front = self.pick_random()
-            # Map the 4 backs to the usage described (3 stacked + 1 for the crop panel)
             b1, b2, b3, b_crop = backs
             self.fullres_image = compose_treasure(b1, b2, b3, b_crop, front)
             self.current_files = {
@@ -264,14 +253,36 @@ class TreasureApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error generating treasure", str(e))
 
+    def _on_resize(self, event):
+        # Debounce resize events for smoother behavior
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(80, self._do_resize)
+
+    def _do_resize(self):
+        self._resize_job = None
+        if self.fullres_image is not None:
+            self.render_for_display(self.fullres_image)
+
     def render_for_display(self, im: Image.Image):
-        """Resize for display if needed, but keep original full-res for saving."""
-        w, h = im.width, im.height
-        scale = min(DISPLAY_MAX_W / w, DISPLAY_MAX_H / h, 1.0)
-        if scale < 1.0:
-            disp = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        else:
-            disp = im
+        """
+        Resize for display to fit the current window (downscale as needed).
+        """
+        # Determine available drawing area inside the image panel
+        panel_w = self.image_panel.winfo_width()
+        panel_h = self.image_panel.winfo_height()
+
+        # When the window first opens, these can be tiny (1x1); estimate from window
+        if panel_w <= 1 or panel_h <= 1:
+            panel_w = max(self.winfo_width() - 40, 200)
+            panel_h = max(self.winfo_height() - 160, 200)
+
+        # Keep aspect ratio; no upscaling beyond 1.0 for crispness
+        scale = min(panel_w / im.width, panel_h / im.height, 1.0)
+        new_w = max(1, int(im.width * scale))
+        new_h = max(1, int(im.height * scale))
+        disp = im if (new_w == im.width and new_h == im.height) else im.resize((new_w, new_h), Image.LANCZOS)
+
         self.tk_image = ImageTk.PhotoImage(disp)
         self.image_panel.configure(image=self.tk_image)
 
@@ -279,35 +290,13 @@ class TreasureApp(tk.Tk):
         if not self.current_files:
             self.status.configure(text="")
             return
-        # Show last digits (21..220) if available for quick reference
+
         def endnum(name):
             m = re.search(r'(\d+)(?=\.(?:jpe?g)$)', name, re.IGNORECASE)
             return m.group(1) if m else name
 
-        text = "  • " + " | ".join(
-            f"{k}: {endnum(v)}" for k, v in self.current_files.items()
-        )
+        text = "  • " + " | ".join(f"{k}: {endnum(v)}" for k, v in self.current_files.items())
         self.status.configure(text=text)
-
-    def save_image(self):
-        if self.fullres_image is None:
-            return
-        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        default = f"treasure_{ts}.png"
-        fn = filedialog.asksaveasfilename(
-            title="Save Composite Image",
-            initialdir=str(self.folder),
-            initialfile=default,
-            defaultextension=".png",
-            filetypes=[("PNG Image", "*.png"), ("All Files", "*.*")]
-        )
-        if not fn:
-            return
-        try:
-            # Always save as PNG to preserve quality; background is solid so RGBA is fine
-            self.fullres_image.save(fn, format="PNG")
-        except Exception as e:
-            messagebox.showerror("Save failed", str(e))
 
 
 def main():
@@ -318,4 +307,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
