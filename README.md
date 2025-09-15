@@ -26,17 +26,28 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
    ```bash
    pip install -r requirements.txt
    ```
-5. **Run** (example CLI; adjust to your entry point):
+5. **Run**:
 
    ```bash
+   # Option A: specify your cards folder explicitly
+   python endless_treasure.py --cards ./cards
+
+   # Option B: run without args; if images aren't found,
+   # the app shows a clear prompt with a "Select Folder" button
    python endless_treasure.py
    ```
+
+   - Help: `python endless_treasure.py --help` or `python endless_treasure.py -?`
 
 ---
 
 ## Features
 
 * **Random draws**: Creates a random treasure on startup and click a button for new random selections.
+
+* **Flexible image location**:
+  - CLI: `--cards /path/to/JPGs` to set the folder.
+  - If not provided or not found, the app shows an in‑app message with a prominent "Select Folder" button to open the picker.
 
 
 ---

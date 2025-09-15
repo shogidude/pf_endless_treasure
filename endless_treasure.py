@@ -24,7 +24,7 @@ import random
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 from PIL import Image, ImageTk, ImageDraw, ImageFilter
 
@@ -208,12 +208,13 @@ class TreasureApp(tk.Tk):
         hdr = ttk.Label(topbar, text="Deck of Endless Treasure — Random Drawer", style="Header.TLabel")
         hdr.pack(side=tk.LEFT)
 
-        btn_new = ttk.Button(topbar, text="New Treasure", command=self.generate)
-        btn_new.pack(side=tk.RIGHT, padx=(8, 0))
+        self.btn_new = ttk.Button(topbar, text="New Treasure", command=self.generate)
+        self.btn_new.pack(side=tk.RIGHT, padx=(8, 0))
 
-        # Display area
-        self.image_panel = ttk.Label(self)
+        # Display area (container frame; we swap contents for empty-state vs image)
+        self.image_panel = ttk.Frame(self)
         self.image_panel.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+        self.image_label = None  # created when we have an image to show
 
         self.status = ttk.Label(self, text="", style="Sub.TLabel")
         self.status.pack(side=tk.BOTTOM, anchor="w", padx=14, pady=(0, 10))
@@ -223,13 +224,62 @@ class TreasureApp(tk.Tk):
 
         # Initial checks and first render
         if len(self.backs) < 4 or len(self.fronts) < 1:
-            messagebox.showerror(
-                "Not enough cards found",
-                "This folder needs at least 4 EVEN-numbered back JPGs and 1 ODD-numbered front JPG "
-                "with file names ending in 21..220 (e.g., Anything_021.jpg … Anything_220.jpg)."
-            )
+            self.btn_new.state(["disabled"])  # can't generate yet
+            self.show_empty_state()
         else:
+            self.btn_new.state(["!disabled"])
             self.generate()
+
+    def show_empty_state(self):
+        """Show message + prominent button to select the cards folder."""
+        # Clear panel
+        for child in self.image_panel.winfo_children():
+            child.destroy()
+
+        # Add generous padding so the text doesn't feel cramped against the green
+        wrap_margin = 240  # total horizontal margin reserved for padding
+        wrap = min(max(self.winfo_width() - wrap_margin, 520), 980)
+        c = ttk.Frame(self.image_panel, padding=32)
+        c.pack(fill=tk.BOTH, expand=True)
+
+        inner = ttk.Frame(c, padding=16)
+        inner.pack(expand=True)
+
+        msg = ("A folder must be selected that contains \nyour 'Deck of Endless Treasure' JPG images.")
+        lbl = ttk.Label(inner, text=msg, style="Sub.TLabel", justify=tk.CENTER, wraplength=wrap, padding=(18, 12))
+        lbl.pack(padx=24, pady=(14, 22))
+
+        btn = ttk.Button(inner, text="Select Folder…", command=self.select_folder_via_dialog)
+        btn.configure(width=28)
+        btn.pack(pady=(0, 10))
+
+    def select_folder_via_dialog(self):
+        chosen = filedialog.askdirectory(
+            title="Select folder with Endless Treasure JPGs",
+            initialdir=str(self.folder),
+            mustexist=True,
+            parent=self,
+        )
+        if not chosen:
+            return
+        new_folder = Path(chosen)
+        fronts, backs = scan_cards(new_folder)
+        if len(backs) >= 4 and len(fronts) >= 1:
+            self.folder = new_folder
+            self.fronts, self.backs = fronts, backs
+            # Enable and render
+            self.btn_new.state(["!disabled"])
+            self.generate()
+        else:
+            messagebox.showwarning(
+                "Not enough images",
+                "The selected folder does not contain enough valid JPGs.\n\n"
+                "Requirements:\n"
+                "- Filenames end with numbers 21..220\n"
+                "- Even numbers are backs (need 4+)\n"
+                "- Odd numbers are fronts (need 1+)",
+                parent=self,
+            )
 
     def pick_random(self):
         back_choices = random.sample(self.backs, 4)
@@ -251,7 +301,7 @@ class TreasureApp(tk.Tk):
             self.render_for_display(self.fullres_image)
             self.update_status()
         except Exception as e:
-            messagebox.showerror("Error generating treasure", str(e))
+            messagebox.showerror("Error generating treasure", str(e), parent=self)
 
     def _on_resize(self, event):
         # Debounce resize events for smoother behavior
@@ -268,6 +318,13 @@ class TreasureApp(tk.Tk):
         """
         Resize for display to fit the current window (downscale as needed).
         """
+        # Ensure image label exists and panel is cleared of empty-state
+        if self.image_label is None or not self.image_label.winfo_exists():
+            for child in self.image_panel.winfo_children():
+                child.destroy()
+            self.image_label = ttk.Label(self.image_panel)
+            self.image_label.pack(fill=tk.BOTH, expand=True)
+
         # Determine available drawing area inside the image panel
         panel_w = self.image_panel.winfo_width()
         panel_h = self.image_panel.winfo_height()
@@ -284,7 +341,7 @@ class TreasureApp(tk.Tk):
         disp = im if (new_w == im.width and new_h == im.height) else im.resize((new_w, new_h), Image.LANCZOS)
 
         self.tk_image = ImageTk.PhotoImage(disp)
-        self.image_panel.configure(image=self.tk_image)
+        self.image_label.configure(image=self.tk_image)
 
     def update_status(self):
         if not self.current_files:
@@ -300,7 +357,31 @@ class TreasureApp(tk.Tk):
 
 
 def main():
-    base = script_dir()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="endless_treasure.py",
+        description=(
+            "Deck of Endless Treasure — Random Drawer. "
+            "Provide a folder of JPG/JPEG images whose filenames end in numbers 21–220. "
+            "Odd numbers are fronts; even numbers are backs. If --cards is omitted or the folder "
+            "does not contain enough images, a folder picker will be shown on startup."
+        )
+    )
+    parser.add_argument(
+        "-c", "--cards",
+        metavar="FOLDER",
+        help=(
+            "Path to folder containing Endless Treasure JPGs. "
+            "If not provided, defaults to the script's directory."
+        ),
+    )
+    # Add -? as an alternative help switch
+    parser.add_argument("-?", action="help", help="Show this help message and exit")
+
+    args = parser.parse_args()
+
+    base = Path(args.cards).expanduser().resolve() if args.cards else script_dir()
     app = TreasureApp(base)
     app.mainloop()
 
