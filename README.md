@@ -74,7 +74,8 @@ This is a **non‑commercial fan project** that relies on Paizo’s **Community 
  ```
  **PF Endless Treasure** uses trademarks and/or copyrights owned by Paizo Inc., used under Paizo's Community Use Policy
 (paizo.com/licenses/communityuse). We are expressly prohibited from charging you to use or access this content. **PF Endless Treasure**
- is not published, endorsed, or specifically approved by Paizo. For more information about Paizo Inc. and Paizo products, visit paizo.com.```
+ is not published, endorsed, or specifically approved by Paizo. For more information about Paizo Inc. and Paizo products, visit paizo.com.
+```
 
 ---
 
