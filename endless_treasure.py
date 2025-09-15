@@ -31,7 +31,8 @@ from PIL import Image, ImageTk, ImageDraw, ImageFilter
 # ---- Card constants from your spec ----
 CARD_W, CARD_H = 744, 1039
 # Relative offsets (x, y) from the first (anchor) card:
-OFF_BACK2 = (0, 578)
+#OFF_BACK2 = (0, 578)
+OFF_BACK2 = (0, 595)
 OFF_BACK3 = (-234, 144)
 OFF_FRONT = (0, 144)
 # Crop box for the standalone back card (left, top, right, bottom)
@@ -180,7 +181,6 @@ class TreasureApp(tk.Tk):
         super().__init__()
         self.title("Deck of Endless Treasure — Random Drawer")
         self.geometry("1200x860")
-        self.minsize(980, 700)
 
         # Style
         self.configure(bg="#0c3024")
@@ -202,13 +202,13 @@ class TreasureApp(tk.Tk):
         self._resize_job = None         # debounce for resize
 
         # Layout
-        topbar = ttk.Frame(self)
-        topbar.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(12, 8))
+        self.topbar = ttk.Frame(self)
+        self.topbar.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(12, 8))
 
-        hdr = ttk.Label(topbar, text="Deck of Endless Treasure — Random Drawer", style="Header.TLabel")
+        hdr = ttk.Label(self.topbar, text="Deck of Endless Treasure — Random Drawer", style="Header.TLabel")
         hdr.pack(side=tk.LEFT)
 
-        self.btn_new = ttk.Button(topbar, text="New Treasure", command=self.generate)
+        self.btn_new = ttk.Button(self.topbar, text="New Treasure", command=self.generate)
         self.btn_new.pack(side=tk.RIGHT, padx=(8, 0))
 
         # Display area (container frame; we swap contents for empty-state vs image)
@@ -298,7 +298,7 @@ class TreasureApp(tk.Tk):
                 "Front": front.name,
                 "Cropped Back": b_crop.name
             }
-            self.render_for_display(self.fullres_image)
+            self.fit_window_to_image(self.fullres_image)
             self.update_status()
         except Exception as e:
             messagebox.showerror("Error generating treasure", str(e), parent=self)
@@ -342,6 +342,61 @@ class TreasureApp(tk.Tk):
 
         self.tk_image = ImageTk.PhotoImage(disp)
         self.image_label.configure(image=self.tk_image)
+
+    def fit_window_to_image(self, im: Image.Image):
+        """Resize the main window to closely match the space needed for the image.
+        Prefers 1:1 scale of the composed image; if screen is smaller, scales down.
+        """
+        # Ensure widgets have computed sizes
+        self.update_idletasks()
+
+        # Known paddings from pack configs
+        PADX_TOPBAR = 14
+        PADY_TOPBAR = (12, 8)
+        PADX_PANEL = 12
+        PADY_PANEL = 8
+        PADX_STATUS = 14
+        PADY_STATUS = (0, 10)
+
+        # Requested sizes of header and status
+        topbar_w = getattr(self, 'topbar', self).winfo_reqwidth()
+        topbar_h = getattr(self, 'topbar', self).winfo_reqheight()
+        status_w = self.status.winfo_reqwidth()
+        status_h = self.status.winfo_reqheight()
+
+        # Max allowed total window size (leave a small margin from screen edges)
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        max_win_w = max(400, screen_w - 40)
+        max_win_h = max(300, screen_h - 80)
+
+        # Overhead height excluding the image area
+        overhead_h = (topbar_h + PADY_TOPBAR[0] + PADY_TOPBAR[1]) + (PADY_PANEL * 2) + (status_h + PADY_STATUS[0] + PADY_STATUS[1])
+
+        # Width contributions of other rows
+        non_img_row_w = max(topbar_w + PADX_TOPBAR * 2, status_w + PADX_STATUS * 2)
+
+        # Target image display size (prefer full size, clamp to available screen space)
+        max_img_w = max_win_w  # window width is max of image width+panel pad vs other rows; clamp later via max()
+        max_img_h = max_win_h - overhead_h
+        max_img_h = max(100, max_img_h)
+
+        scale = min(max_img_w / im.width, max_img_h / im.height, 1.0)
+        disp_w = max(1, int(im.width * scale))
+        disp_h = max(1, int(im.height * scale))
+
+        # Compute final window size
+        win_w = max(disp_w + PADX_PANEL * 2, non_img_row_w)
+        win_h = overhead_h + disp_h
+
+        # Clamp to screen just in case
+        win_w = min(win_w, max_win_w)
+        win_h = min(win_h, max_win_h)
+
+        # Apply and render
+        self.geometry(f"{win_w}x{win_h}")
+        self.update_idletasks()
+        self.render_for_display(im)
 
     def update_status(self):
         if not self.current_files:
