@@ -3,6 +3,8 @@
 *A lightweight, local Python app that simulates treasure draws using the **JPGs you already own** for Paizo’s* Pathfinder Endless Treasure *card deck.*
 No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure results for your table.
 
+![Random Treasures](./random_treasure.png)
+
 ---
 
 ## What this is
