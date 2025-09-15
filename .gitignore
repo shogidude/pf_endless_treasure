@@ -9,8 +9,9 @@ __pycache__/
 # C extensions
 *.so
 
-# Virtual environment
+# Virtual environments
 venv/
+.venv/
 
 # Distribution / packaging
 .Python
@@ -69,4 +70,3 @@ dmypy.json
 .vscode/
 .idea/
 *.swp
-

@@ -21,20 +21,21 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
 1. **Install Python** (3.10+ recommended).
 2. **Clone** this repository.
 3. **Provide your images**: place your purchased *Endless Treasure* JPGs into a folder, e.g. `./cards/`.
-4. **Install deps**:
+4. **Install deps**: `pip install -r requirements.txt`
+5. **Run** one of these:
 
    ```bash
-   pip install -r requirements.txt
-   ```
-5. **Run**:
+   # Easiest (Linux/macOS): auto-venv + run
+   ./run.sh               # uses ./cards if present
+   ./run.sh --cards ./cards
 
-   ```bash
-   # Option A: specify your cards folder explicitly
+   # Windows (Command Prompt):
+   run.bat                # uses .\cards if present
+   run.bat --cards .\cards
+
+   # Direct (no helper script):
    python endless_treasure.py --cards ./cards
-
-   # Option B: run without args; if images aren't found,
-   # the app shows a clear prompt with a "Select Folder" button
-   python endless_treasure.py
+   python endless_treasure.py            # shows a folder picker if needed
    ```
 
    - Help: `python endless_treasure.py --help` or `python endless_treasure.py -?`
@@ -43,7 +44,7 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
 
 ## Features
 
-* **Random draws**: Creates a random treasure on startup and click a button for new random selections.
+* **Random draws**: Creates a random treasure on startup; click the button for new draws.
 
 * **Flexible image location**:
   - CLI: `--cards /path/to/JPGs` to set the folder.
@@ -70,6 +71,19 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
 
 * **License**: MIT (for the code).
 * **Content**: No Paizo content is included in this repository. You provide your own legally purchased images.
+
+---
+
+## Packaging (optional)
+
+If you want a standalone executable (no Python required on the target machine), you can build one with PyInstaller:
+
+```bash
+pip install pyinstaller
+pyinstaller --name PF-Endless-Treasure --onefile --windowed endless_treasure.py
+```
+
+The built binary will be in `dist/`. On Windows, `--windowed` prevents a console window from appearing.
 
 ---
 
