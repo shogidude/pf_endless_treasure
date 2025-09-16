@@ -46,9 +46,30 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
 
 ## Features
 
-* **Random draws**: Creates a random treasure on startup; click the button for new draws.
+* **Two tabs: Random + Browser**
+  - Random: Compose a polished treasure layout from 4 backs + 1 front with soft shadows on felt.
+  - Browser: View single cards with the same styling; navigate by section or continuously through all cards.
 
-* **Flexible image location**:
+* **Random draws**
+  - Generates a random treasure on startup (when enough images are available).
+  - Click “New Treasure” (or press Space/N/Enter) for new draws.
+
+* **Item browsing with Item # jump**
+  - In the Browser tab, use the “Item #” field to jump to an item directly.
+  - Mapping: Item 1 → card 21 front (or back if front missing), Item 2 → 23, … Item 100 → 219.
+  - The Item # field updates as you browse (blank when viewing non‑item cards 1–20).
+
+* **Navigation**
+  - Sections: Instructions (1–12), Damage (13–14), DC (15–16), Misc (17–20), Items (21–220).
+  - Prev/Next traverse within a section and automatically continue across sections; wraps from last to first and vice versa.
+  - Flip toggles between front/back of the current card when both are present.
+
+* **Keyboard shortcuts**
+  - Random tab: Space / N / Enter → New Treasure.
+  - Browser tab: Left/Right → Prev/Next, Home/End → First/Last in section, Ctrl+L → focus Item #.
+  - Enter (and keypad Enter) in Item # → jump to that item.
+
+* **Flexible image location**
   - CLI: `--cards /path/to/JPGs` to set the folder.
   - If not provided or not found, the app shows an in‑app message with a prominent "Select Folder" button to open the picker.
 
@@ -66,6 +87,10 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
 
 * The app **indexes JPG filenames** in your `--cards` folder.
 * It **does not** read or distribute Paizo text/art beyond the file paths you provide.
+
+Notes on indexing behavior:
+- Random tab uses cards numbered 21–220 (odd = fronts, even = backs).
+- Browser tab indexes 1–220 for section navigation. If a first card has no trailing number but a matching “2” (e.g., `…Cards2.jpg`) exists, the matching unnumbered file (e.g., `…Cards.jpg`) is treated as card 1.
 
 ---
 
