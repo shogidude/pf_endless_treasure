@@ -27,6 +27,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from PIL import Image, ImageTk, ImageDraw, ImageFilter
+from functools import lru_cache
 
 # ---- Card constants from your spec ----
 CARD_W, CARD_H = 744, 1039
@@ -56,16 +57,29 @@ def script_dir() -> Path:
 
 def extract_trailing_number(p: Path):
     """
-    Extracts the trailing numeric run before the extension (e.g., 'foo_219.jpg' -> 219).
+    Extract a card number from a filename.
+    - Strict: digits immediately before the extension (e.g., 'foo219.jpg' -> 219).
+    - Relaxed: digits followed by an optional small suffix right before the extension
+      (e.g., 'foo_001_front.jpg' -> 1, 'bar-12a.jpeg' -> 12).
+    Does NOT consider numbers that are not near the extension to avoid product codes.
     Returns int or None.
     """
-    m = re.search(r'(\d+)(?=\.(?:jpe?g)$)', p.name, flags=re.IGNORECASE)
-    if not m:
-        return None
-    try:
-        return int(m.group(1))
-    except ValueError:
-        return None
+    name = p.name
+    # Strict: digits just before extension
+    m = re.search(r'(\d+)(?=\.(?:jpe?g)$)', name, flags=re.IGNORECASE)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
+    # Relaxed: digits + optional short suffix immediately before extension
+    m = re.search(r'(\d+)[ _-]*(?:front|back|a|b)?(?=\.(?:jpe?g)$)', name, flags=re.IGNORECASE)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
+    return None
 
 
 def scan_cards(folder: Path):
@@ -173,33 +187,78 @@ def compose_treasure(back1: Path, back2: Path, back3: Path, back_for_crop: Path,
     canvas.alpha_composite(mat, (panel_x, panel_y))
     canvas.alpha_composite(im_crop, (panel_x + mat_pad, panel_y + mat_pad))
 
+    # Subtle overlay on the front card: show its number and side
+    try:
+        front_num = extract_trailing_number(front)
+        if front_num is not None:
+            draw = ImageDraw.Draw(canvas)
+            label = f"#{front_num} Front"
+            bbox = draw.textbbox((0, 0), label)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+            pad_x, pad_y = 10, 6
+            box_w = tw + pad_x * 2
+            box_h = th + pad_y * 2
+            inset = 8
+            x = p4[0] + CARD_W - inset - box_w
+            y = p4[1] + CARD_H - inset - box_h
+            box = (x, y, x + box_w, y + box_h)
+            draw.rounded_rectangle(box, radius=10, fill=(0, 0, 0, 120))
+            draw.text((x + pad_x, y + pad_y), label, fill=(240, 240, 240, 255))
+    except Exception:
+        pass
+
     return canvas
 
 
-class TreasureApp(tk.Tk):
-    def __init__(self, folder: Path):
-        super().__init__()
-        self.title("Deck of Endless Treasure — Random Drawer")
-        self.geometry("1200x860")
+def index_all_cards(folder: Path):
+    """
+    Index JPG/JPEG files ending with a trailing number 1..220.
+    Returns a dict[int, Path] choosing a deterministic (sorted) path when multiple exist.
+    """
+    jpgs = list(folder.glob("*.jpg")) + list(folder.glob("*.JPG")) + \
+           list(folder.glob("*.jpeg")) + list(folder.glob("*.JPEG"))
+    buckets = {}
+    unnumbered = []
+    for p in jpgs:
+        n = extract_trailing_number(p)
+        if n is None:
+            # Keep track of unnumbered candidates for special cases (e.g., first card front)
+            unnumbered.append(p)
+            continue
+        if 1 <= n <= 220:
+            buckets.setdefault(n, []).append(p)
+    chosen = {}
+    for n, paths in buckets.items():
+        paths_sorted = sorted(paths, key=lambda q: q.name.lower())
+        chosen[n] = paths_sorted[0]
 
-        # Style
-        self.configure(bg="#0c3024")
-        style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
-        style.configure("TButton", padding=8, font=("Segoe UI", 11))
-        style.configure("Header.TLabel", foreground="#eaeaea", background="#0c3024", font=("Segoe UI", 14, "bold"))
-        style.configure("Sub.TLabel", foreground="#cfd9d2", background="#0c3024", font=("Segoe UI", 10))
+    # Special-case pairing: if #1 is missing but #2 exists and there is a file
+    # whose stem matches the #2 file stem with trailing digits removed, treat it as #1.
+    def _strip_trailing_digits(stem: str) -> str:
+        return re.sub(r"\d+$", "", stem)
+
+    if 1 not in chosen and 2 in chosen and unnumbered:
+        base = _strip_trailing_digits(chosen[2].stem)
+        # Prefer exact stem match among unnumbered
+        candidates = [p for p in unnumbered if _strip_trailing_digits(p.stem) == base]
+        if candidates:
+            chosen[1] = sorted(candidates, key=lambda q: q.name.lower())[0]
+    return chosen
+
+
+class RandomFrame(ttk.Frame):
+    def __init__(self, master, app, folder: Path):
+        super().__init__(master)
+        self.app = app
+        self.folder = folder
 
         # Data
-        self.folder = folder
         self.fronts, self.backs = scan_cards(self.folder)
-        self.fullres_image = None       # Pillow Image
-        self.tk_image = None            # ImageTk for display
-        self.current_files = {}         # record selection for status text
-        self._resize_job = None         # debounce for resize
+        self.fullres_image = None
+        self.tk_image = None
+        self.current_files = {}
+        self._resize_job = None
 
         # Layout
         self.topbar = ttk.Frame(self)
@@ -211,18 +270,23 @@ class TreasureApp(tk.Tk):
         self.btn_new = ttk.Button(self.topbar, text="New Treasure", command=self.generate)
         self.btn_new.pack(side=tk.RIGHT, padx=(8, 0))
 
-        # Display area (container frame; we swap contents for empty-state vs image)
         self.image_panel = ttk.Frame(self)
         self.image_panel.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
-        self.image_label = None  # created when we have an image to show
+        self.image_label = None
 
         self.status = ttk.Label(self, text="", style="Sub.TLabel")
         self.status.pack(side=tk.BOTTOM, anchor="w", padx=14, pady=(0, 10))
 
-        # Re-render on window resize (debounced)
+        # Resize handling
         self.bind("<Configure>", self._on_resize)
 
-        # Initial checks and first render
+        # Keyboard shortcuts (active when Random tab selected)
+        self.bind_all("<space>", self._kb_new)
+        self.bind_all("n", self._kb_new)
+        self.bind_all("N", self._kb_new)
+        self.bind_all("<Return>", self._kb_new)
+
+        # Initial render
         if len(self.backs) < 4 or len(self.fronts) < 1:
             self.btn_new.state(["disabled"])  # can't generate yet
             self.show_empty_state()
@@ -265,11 +329,8 @@ class TreasureApp(tk.Tk):
         new_folder = Path(chosen)
         fronts, backs = scan_cards(new_folder)
         if len(backs) >= 4 and len(fronts) >= 1:
-            self.folder = new_folder
-            self.fronts, self.backs = fronts, backs
-            # Enable and render
-            self.btn_new.state(["!disabled"])
-            self.generate()
+            # Propagate selection to the whole app (updates both tabs)
+            self.app.set_folder(new_folder)
         else:
             messagebox.showwarning(
                 "Not enough images",
@@ -302,6 +363,22 @@ class TreasureApp(tk.Tk):
             self.update_status()
         except Exception as e:
             messagebox.showerror("Error generating treasure", str(e), parent=self)
+
+    # Keyboard helpers
+    def _is_active(self):
+        try:
+            sel = self.app.notebook.select()
+            widget = self.app.nametowidget(sel)
+            return widget is self
+        except Exception:
+            return True
+
+    def _kb_new(self, event):
+        if self._is_active():
+            # Only when generation is enabled
+            state = self.btn_new.state()
+            if 'disabled' not in state:
+                self.generate()
 
     def _on_resize(self, event):
         # Debounce resize events for smoother behavior
@@ -394,8 +471,10 @@ class TreasureApp(tk.Tk):
         win_h = min(win_h, max_win_h)
 
         # Apply and render
-        self.geometry(f"{win_w}x{win_h}")
-        self.update_idletasks()
+        # Apply to the toplevel window hosting this frame
+        toplevel = self.winfo_toplevel()
+        toplevel.geometry(f"{win_w}x{win_h}")
+        toplevel.update_idletasks()
         self.render_for_display(im)
 
     def update_status(self):
@@ -408,7 +487,440 @@ class TreasureApp(tk.Tk):
             return m.group(1) if m else name
 
         text = "  • " + " | ".join(f"{k}: {endnum(v)}" for k, v in self.current_files.items())
+        # Add quick hint for keyboard usage
+        text += "   —   Press N or Space for new"
         self.status.configure(text=text)
+
+
+class BrowserFrame(ttk.Frame):
+    """Basic single-card browser scaffold (Step 2)."""
+    SECTIONS = [
+        ("Instructions (1–12)", 1, 12),
+        ("Damage by Level (13–14)", 13, 14),
+        ("DC by Level (15–16)", 15, 16),
+        ("Misc. (17–20)", 17, 20),
+        ("Items (21–220)", 21, 220),
+    ]
+
+    def __init__(self, master, app, folder: Path):
+        super().__init__(master)
+        self.app = app
+        self.folder = folder
+        self.index = index_all_cards(self.folder)
+        self.current_section = 4  # default to Items
+        self.current_num = self._first_available_in_section(self.current_section) or 21
+        self.tk_image = None
+        self._resize_job = None
+
+        # Top bar (multi-row to avoid overflow on narrow windows)
+        self.topbar = ttk.Frame(self)
+        self.topbar.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(12, 8))
+
+        # Row 1: Title
+        row1 = ttk.Frame(self.topbar)
+        row1.pack(side=tk.TOP, fill=tk.X)
+        ttk.Label(row1, text="Card Browser", style="Header.TLabel").pack(side=tk.LEFT)
+
+        # Row 2: Section selector
+        row2 = ttk.Frame(self.topbar)
+        row2.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
+        ttk.Label(row2, text="Section:", style="Sub.TLabel").pack(side=tk.LEFT)
+        self.section_var = tk.StringVar()
+        names = [s[0] for s in self.SECTIONS]
+        self.section_cb = ttk.Combobox(row2, values=names, textvariable=self.section_var, state="readonly", width=26)
+        self.section_cb.current(self.current_section)
+        self.section_cb.pack(side=tk.LEFT, padx=(8, 0))
+        try:
+            self.section_cb.configure(font=("Segoe UI", 10))
+        except tk.TclError:
+            pass
+        self.section_cb.bind("<<ComboboxSelected>>", self._on_section_change)
+
+        # Row 3: Navigation
+        row3 = ttk.Frame(self.topbar)
+        row3.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
+        ttk.Label(row3, text="Item #", style="Sub.TLabel").pack(side=tk.LEFT)
+        self.jump_var = tk.StringVar()
+        self.jump_entry = ttk.Entry(row3, textvariable=self.jump_var, width=6)
+        self.jump_entry.pack(side=tk.LEFT)
+        try:
+            self.jump_entry.configure(font=("Segoe UI", 10))
+        except tk.TclError:
+            pass
+        self.jump_entry.bind("<Return>", self._on_jump)
+        self.jump_entry.bind("<KP_Enter>", self._on_jump)
+        ttk.Button(row3, text="Go", command=self._on_jump, style="Toolbar.TButton").pack(side=tk.LEFT, padx=(6, 12))
+
+        self.btn_prev = ttk.Button(row3, text="Prev", command=self._prev, style="Toolbar.TButton")
+        self.btn_prev.pack(side=tk.LEFT)
+        self.btn_next = ttk.Button(row3, text="Next", command=self._next, style="Toolbar.TButton")
+        self.btn_next.pack(side=tk.LEFT, padx=(6, 0))
+        self.btn_flip = ttk.Button(row3, text="Flip", command=self._flip, style="Toolbar.TButton")
+        self.btn_flip.pack(side=tk.LEFT, padx=(12, 0))
+
+        # Display and status
+        self.image_panel = ttk.Frame(self)
+        self.image_panel.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+        self.image_label = None
+
+        self.status = ttk.Label(self, text="", style="Sub.TLabel")
+        self.status.pack(side=tk.BOTTOM, anchor="w", padx=14, pady=(0, 10))
+
+        self.bind("<Configure>", self._on_resize)
+
+        # Keyboard navigation (scoped by checking active tab)
+        self.bind_all("<Left>", self._kb_prev)
+        self.bind_all("<Right>", self._kb_next)
+        self.bind_all("<Home>", self._kb_home)
+        self.bind_all("<End>", self._kb_end)
+        self.bind_all("<Control-l>", self._kb_focus_jump)
+        self._render_current()
+
+    def set_folder(self, folder: Path):
+        self.folder = folder
+        self.index = index_all_cards(self.folder)
+        # Stay in the same section, jump to first available
+        n = self._first_available_in_section(self.current_section)
+        if n:
+            self.current_num = n
+        self._render_current()
+
+    def _on_resize(self, event):
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(80, self._do_resize)
+
+    def _do_resize(self):
+        self._resize_job = None
+        if self.tk_image is not None and hasattr(self, "_last_pillow"):
+            self._render_image(self._last_pillow)
+
+    def _section_bounds(self, idx):
+        _, a, b = self.SECTIONS[idx]
+        return a, b
+
+    def _first_available_in_section(self, idx):
+        a, b = self._section_bounds(idx)
+        for n in range(a, b + 1):
+            if n in self.index:
+                return n
+        return None
+
+    def _nearest_available(self, target, a, b, step=1):
+        # Search from target outward within [a,b]
+        if target in self.index:
+            return target
+        # step positive for forward, negative for backward search
+        forward = range(target + (1 if step >= 0 else -1), b + 1 if step >= 0 else a - 1, 1 if step >= 0 else -1)
+        for n in forward:
+            if a <= n <= b and n in self.index:
+                return n
+        backward = range(target - (1 if step >= 0 else -1), a - 1 if step >= 0 else b + 1, -1 if step >= 0 else 1)
+        for n in backward:
+            if a <= n <= b and n in self.index:
+                return n
+        return None
+
+    def _on_section_change(self, event=None):
+        self.current_section = self.section_cb.current()
+        n = self._first_available_in_section(self.current_section)
+        if n is not None:
+            self.current_num = n
+        self._render_current()
+
+    def _on_jump(self, event=None):
+        """Interpret entry as Item # and go to that item's card.
+        Item #1 corresponds to card 21 (front), Item #2 -> 23 (front), etc.
+        """
+        txt = self.jump_var.get().strip()
+        try:
+            item = int(txt)
+        except ValueError:
+            return
+        # Clamp to valid item range 1..100
+        item = max(1, min(100, item))
+        n = self._card_num_for_item(item)
+        if n is None:
+            # Find nearest item with available card
+            for delta in range(1, 100):
+                up = item + delta
+                down = item - delta
+                if up <= 100:
+                    n = self._card_num_for_item(up)
+                    if n is not None:
+                        item = up
+                        break
+                if down >= 1:
+                    n = self._card_num_for_item(down)
+                    if n is not None:
+                        item = down
+                        break
+        if n is not None:
+            self.current_num = n
+            # Ensure section shows Items
+            self.current_section = 4
+            self.section_cb.current(4)
+            self._render_current()
+
+    def _prev(self):
+        if not self.index:
+            return
+        # Browse across all cards with wrap-around
+        current = self.current_num
+        n = current - 1
+        while n >= 1:
+            if n in self.index:
+                self.current_num = n
+                self._sync_section_to_number(n)
+                self._render_current()
+                return
+            n -= 1
+        # Wrap to max and go downward
+        n = 220
+        while n > current:
+            if n in self.index:
+                self.current_num = n
+                self._sync_section_to_number(n)
+                self._render_current()
+                return
+            n -= 1
+
+    def _next(self):
+        if not self.index:
+            return
+        # Browse across all cards with wrap-around
+        current = self.current_num
+        n = current + 1
+        while n <= 220:
+            if n in self.index:
+                self.current_num = n
+                self._sync_section_to_number(n)
+                self._render_current()
+                return
+            n += 1
+        # Wrap to min and go upward
+        n = 1
+        while n < current:
+            if n in self.index:
+                self.current_num = n
+                self._sync_section_to_number(n)
+                self._render_current()
+                return
+            n += 1
+
+    def _render_current(self):
+        p = self.index.get(self.current_num)
+        if not p:
+            # Clear or show empty-state
+            for child in self.image_panel.winfo_children():
+                child.destroy()
+            self.image_label = None
+            # Empty state with folder picker reuse from Random tab
+            c = ttk.Frame(self.image_panel, padding=32)
+            c.pack(fill=tk.BOTH, expand=True)
+            inner = ttk.Frame(c, padding=16)
+            inner.pack(expand=True)
+            ttk.Label(inner, text="No images available in this section.", style="Sub.TLabel").pack(pady=(0, 10))
+            ttk.Button(inner, text="Select Folder…", command=self._delegate_folder_dialog).pack()
+            self.status.configure(text="")
+            return
+        im = self._compose_single_card(p)
+        self._last_pillow = im
+        self._render_image(im)
+        side = "Front" if (self.current_num % 2 == 1) else "Back"
+        self.status.configure(text=f"Card #{self.current_num} {side} — {p.name}")
+        # Update controls state
+        self._update_controls()
+        # Reflect Item # in the entry when viewing an item card; blank otherwise
+        item_no = self._item_num_for_card(self.current_num)
+        self.jump_var.set(str(item_no) if item_no is not None else "")
+
+    def _update_controls(self):
+        # In loop mode, enable prev/next if there's more than one card available overall
+        enabled = len(self.index) > 1
+        self.btn_prev.state(("!disabled",) if enabled else ("disabled",))
+        self.btn_next.state(("!disabled",) if enabled else ("disabled",))
+        # Flip enablement
+        pair = self.current_num + 1 if (self.current_num % 2 == 1) else self.current_num - 1
+        self.btn_flip.state(("!disabled",) if (1 <= pair <= 220 and pair in self.index) else ("disabled",))
+
+    def _compose_single_card(self, path: Path) -> Image.Image:
+        im = _load_rgba_card_cached(str(path))
+        # Build a canvas with margins like the random view
+        margin = OUTER_MARGIN
+        canvas = Image.new("RGBA", (CARD_W + margin * 2, CARD_H + margin * 2), BG_COLOR + (255,))
+        paste_with_shadow(canvas, im, (margin, margin))
+        # Subtle number overlay (bottom-right)
+        try:
+            draw = ImageDraw.Draw(canvas)
+            side = "Front" if (self.current_num % 2 == 1) else "Back"
+            label = f"#{self.current_num} {side}"
+            # Measure text box
+            bbox = draw.textbbox((0, 0), label)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+            pad_x, pad_y = 10, 6
+            box_w = tw + pad_x * 2
+            box_h = th + pad_y * 2
+            x = canvas.width - margin - 8 - box_w
+            y = canvas.height - margin - 8 - box_h
+            # Semi-opaque background
+            box = (x, y, x + box_w, y + box_h)
+            ImageDraw.Draw(canvas).rounded_rectangle(box, radius=10, fill=(0, 0, 0, 120))
+            # Text
+            draw.text((x + pad_x, y + pad_y), label, fill=(240, 240, 240, 255))
+        except Exception:
+            pass
+        return canvas
+
+    def _render_image(self, im: Image.Image):
+        if self.image_label is None or not self.image_label.winfo_exists():
+            for child in self.image_panel.winfo_children():
+                child.destroy()
+            self.image_label = ttk.Label(self.image_panel)
+            self.image_label.pack(fill=tk.BOTH, expand=True)
+
+        panel_w = self.image_panel.winfo_width()
+        panel_h = self.image_panel.winfo_height()
+        if panel_w <= 1 or panel_h <= 1:
+            panel_w = max(self.winfo_width() - 40, 200)
+            panel_h = max(self.winfo_height() - 160, 200)
+        scale = min(panel_w / im.width, panel_h / im.height, 1.0)
+        new_w = max(1, int(im.width * scale))
+        new_h = max(1, int(im.height * scale))
+        disp = im if (new_w == im.width and new_h == im.height) else im.resize((new_w, new_h), Image.LANCZOS)
+        self.tk_image = ImageTk.PhotoImage(disp)
+        self.image_label.configure(image=self.tk_image)
+
+    # Item mapping helpers
+    def _item_num_for_card(self, n: int):
+        if 21 <= n <= 220:
+            # Pair: (21,22)->1, (23,24)->2, ...
+            odd = n if n % 2 == 1 else n - 1
+            return ((odd - 21) // 2) + 1
+        return None
+
+    def _card_num_for_item(self, item: int):
+        # Preferred front card for an item
+        front = 21 + (item - 1) * 2
+        back = front + 1
+        if front in self.index:
+            return front
+        if back in self.index:
+            return back
+        return None
+
+    def _flip(self):
+        # Flip between front/back pair numbers
+        pair = self.current_num + 1 if (self.current_num % 2 == 1) else self.current_num - 1
+        if 1 <= pair <= 220 and pair in self.index:
+            # Update section to whatever contains the pair
+            self.current_num = pair
+            self._sync_section_to_number(pair)
+            self._render_current()
+
+    def _sync_section_to_number(self, n: int):
+        # Adjust combobox to the section that contains n
+        for i, (_, a, b) in enumerate(self.SECTIONS):
+            if a <= n <= b:
+                if i != self.current_section:
+                    self.current_section = i
+                    self.section_cb.current(i)
+                return
+
+    def _delegate_folder_dialog(self):
+        # Reuse the Random tab's folder picker
+        if hasattr(self.app, "random_tab"):
+            self.app.random_tab.select_folder_via_dialog()
+
+    # Keyboard helpers
+    def _is_active(self):
+        try:
+            sel = self.app.notebook.select()
+            widget = self.app.nametowidget(sel)
+            return widget is self
+        except Exception:
+            return True
+
+    def _kb_prev(self, event):
+        if self._is_active():
+            self._prev()
+
+    def _kb_next(self, event):
+        if self._is_active():
+            self._next()
+
+    def _kb_home(self, event):
+        if self._is_active():
+            n = self._first_available_in_section(self.current_section)
+            if n is not None:
+                self.current_num = n
+                self._render_current()
+
+    def _kb_end(self, event):
+        if self._is_active():
+            a, b = self._section_bounds(self.current_section)
+            for n in range(b, a - 1, -1):
+                if n in self.index:
+                    self.current_num = n
+                    self._render_current()
+                    break
+
+    def _kb_focus_jump(self, event):
+        if self._is_active():
+            self.jump_entry.focus_set()
+
+
+@lru_cache(maxsize=32)
+def _load_rgba_card_cached(path: str) -> Image.Image:
+    im = Image.open(path).convert("RGBA")
+    if im.size != (CARD_W, CARD_H):
+        im = im.resize((CARD_W, CARD_H), Image.LANCZOS)
+    return im
+
+
+class TreasureApp(tk.Tk):
+    def __init__(self, folder: Path):
+        super().__init__()
+        self.title("Deck of Endless Treasure")
+        self.geometry("1200x860")
+
+        # Style
+        self.configure(bg="#0c3024")
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("TButton", padding=8, font=("Segoe UI", 11))
+        style.configure("Header.TLabel", foreground="#eaeaea", background="#0c3024", font=("Segoe UI", 14, "bold"))
+        style.configure("Sub.TLabel", foreground="#cfd9d2", background="#0c3024", font=("Segoe UI", 10))
+        style.configure("Toolbar.TButton", padding=(6, 2), font=("Segoe UI", 10))
+
+        self.folder = folder
+
+        # Notebook with tabs
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        self.random_tab = RandomFrame(self.notebook, app=self, folder=self.folder)
+        self.browser_tab = BrowserFrame(self.notebook, app=self, folder=self.folder)
+        self.notebook.add(self.random_tab, text="Random")
+        self.notebook.add(self.browser_tab, text="Browser")
+
+    def set_folder(self, folder: Path):
+        self.folder = folder
+        # Update Random tab
+        self.random_tab.folder = folder
+        self.random_tab.fronts, self.random_tab.backs = scan_cards(folder)
+        if len(self.random_tab.backs) >= 4 and len(self.random_tab.fronts) >= 1:
+            self.random_tab.btn_new.state(["!disabled"])
+            self.random_tab.generate()
+        else:
+            self.random_tab.btn_new.state(["disabled"])
+            self.random_tab.show_empty_state()
+        # Update Browser tab
+        self.browser_tab.set_folder(folder)
 
 
 def main():
@@ -417,10 +929,10 @@ def main():
     parser = argparse.ArgumentParser(
         prog="endless_treasure.py",
         description=(
-            "Deck of Endless Treasure — Random Drawer. "
-            "Provide a folder of JPG/JPEG images whose filenames end in numbers 21–220. "
+            "Deck of Endless Treasure — Random Drawer and Browser. "
+            "Provide a folder of JPG/JPEG images whose filenames end in numbers 1–220. "
             "Odd numbers are fronts; even numbers are backs. If --cards is omitted or the folder "
-            "does not contain enough images, a folder picker will be shown on startup."
+            "does not contain enough images for random draw, a folder picker will be shown."
         )
     )
     parser.add_argument(
@@ -431,7 +943,6 @@ def main():
             "If not provided, defaults to the script's directory."
         ),
     )
-    # Add -? as an alternative help switch
     parser.add_argument("-?", action="help", help="Show this help message and exit")
 
     args = parser.parse_args()
