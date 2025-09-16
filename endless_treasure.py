@@ -25,9 +25,11 @@ from pathlib import Path
 
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+from tkinter import scrolledtext as tkst
 
 from PIL import Image, ImageTk, ImageDraw, ImageFilter
 from functools import lru_cache
+import webbrowser
 
 # ---- Card constants from your spec ----
 CARD_W, CARD_H = 744, 1039
@@ -46,6 +48,10 @@ RIGHT_GAP = 60  # space between the stacked cluster and the cropped panel
 SHADOW_OFFSET = (10, 10)
 SHADOW_BLUR = 10
 SHADOW_ALPHA = 90  # 0..255
+
+# ---- App metadata ----
+APP_TITLE = "Deck of Endless Treasure"
+APP_VERSION = "dev"
 
 
 def script_dir() -> Path:
@@ -893,10 +899,121 @@ def _load_rgba_card_cached(path: str) -> Image.Image:
     return im
 
 
+class AboutFrame(ttk.Frame):
+    def __init__(self, master, app):
+        super().__init__(master)
+        self.app = app
+
+        # Top bar
+        top = ttk.Frame(self)
+        top.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(12, 8))
+        ttk.Label(top, text=f"About — {APP_TITLE}", style="Header.TLabel").pack(side=tk.LEFT)
+
+        # Quick links
+        links = ttk.Frame(top)
+        links.pack(side=tk.RIGHT)
+        ttk.Button(links, text="Open README", command=self._open_readme, style="Toolbar.TButton").pack(side=tk.LEFT, padx=(0,6))
+        ttk.Button(links, text="Open LICENSE", command=self._open_license, style="Toolbar.TButton").pack(side=tk.LEFT, padx=(0,6))
+        ttk.Button(links, text="Visit Valley Websites", command=lambda: self._open_url("https://valleywebsites.net/"), style="Toolbar.TButton").pack(side=tk.LEFT, padx=(0,6))
+        ttk.Button(links, text="Tip on Patreon", command=lambda: self._open_url("https://www.patreon.com/c/backroomsdotnet/membership"), style="Toolbar.TButton").pack(side=tk.LEFT)
+
+        # Scrolling content
+        body = ttk.Frame(self)
+        body.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+        txt = tkst.ScrolledText(body, wrap=tk.WORD, height=20)
+        txt.pack(fill=tk.BOTH, expand=True)
+
+        content = self._build_content()
+        try:
+            txt.configure(font=("Segoe UI", 10))
+        except tk.TclError:
+            pass
+        txt.insert(tk.END, content)
+        txt.configure(state=tk.DISABLED)
+
+    def _open_url(self, url: str):
+        try:
+            webbrowser.open(url)
+        except Exception:
+            messagebox.showinfo("Open URL", url, parent=self)
+
+    def _open_readme(self):
+        path = script_dir() / "README.md"
+        try:
+            webbrowser.open(path.as_uri())
+        except Exception:
+            messagebox.showinfo("README.md", str(path), parent=self)
+
+    def _open_license(self):
+        path = script_dir() / "LICENSE"
+        try:
+            webbrowser.open(path.as_uri())
+        except Exception:
+            messagebox.showinfo("LICENSE", str(path), parent=self)
+
+    def _build_content(self) -> str:
+        # Load MIT license text
+        lic_path = script_dir() / "LICENSE"
+        try:
+            license_text = lic_path.read_text(encoding="utf-8")
+        except Exception:
+            license_text = (
+                "MIT License\n\n"
+                "Permission is hereby granted, free of charge, to any person obtaining a copy\n"
+                "of this software and associated documentation files (the 'Software'), to deal\n"
+                "in the Software without restriction...\n"
+            )
+
+        cup_block = (
+            "PF Endless Treasure uses trademarks and/or copyrights owned by Paizo Inc., "
+            "used under Paizo's Community Use Policy (paizo.com/licenses/communityuse). "
+            "We are expressly prohibited from charging you to use or access this content. "
+            "PF Endless Treasure is not published, endorsed, or specifically approved by Paizo. "
+            "For more information about Paizo Inc. and Paizo products, visit paizo.com."
+        )
+
+        lines = []
+        add = lines.append
+        add(f"{APP_TITLE} — {APP_VERSION}")
+        add("")
+        add("Community Use Policy (CUP)")
+        add("—" * 32)
+        add(cup_block)
+        add("")
+        add("Legally Purchased Cards Required")
+        add("—" * 32)
+        add("This software does not include any Paizo content. You must supply your own, legally purchased JPGs of the Deck of Endless Treasure. The app runs locally and never uploads your files.")
+        add("")
+        add("Free, Open Source Software")
+        add("—" * 32)
+        add("This app is free to use under the MIT License. No paywalls, subscriptions, or DRM.")
+        add("")
+        add("Releases and Compatibility")
+        add("—" * 32)
+        add("If Paizo re-releases or republishes the deck with different layout, resolution, or file naming conventions, parts of this app may stop working until updated.")
+        add("")
+        add("Tips and Professional Services")
+        add("—" * 32)
+        add("If this app helps you, tips are appreciated: https://www.patreon.com/c/backroomsdotnet/membership")
+        add("Need custom software or web work? Hire Valley Websites: https://valleywebsites.net/")
+        add("")
+        add("Acknowledgments")
+        add("—" * 32)
+        add("Thanks to Paizo and the Pathfinder community. Pathfinder, Deck of Endless Treasure, and related marks are © Paizo Inc., used per CUP.")
+        add("")
+        add("License (MIT)")
+        add("—" * 32)
+        add(license_text.strip())
+        add("")
+
+        return "\n".join(lines)
+
+
+
 class TreasureApp(tk.Tk):
     def __init__(self, folder: Path):
         super().__init__()
-        self.title("Deck of Endless Treasure")
+        self.title(APP_TITLE)
         self.geometry("1200x860")
 
         # Style
@@ -919,8 +1036,10 @@ class TreasureApp(tk.Tk):
 
         self.random_tab = RandomFrame(self.notebook, app=self, folder=self.folder)
         self.browser_tab = BrowserFrame(self.notebook, app=self, folder=self.folder)
+        self.about_tab = AboutFrame(self.notebook, app=self)
         self.notebook.add(self.random_tab, text="Random")
         self.notebook.add(self.browser_tab, text="Browser")
+        self.notebook.add(self.about_tab, text="About")
 
     def set_folder(self, folder: Path):
         self.folder = folder
