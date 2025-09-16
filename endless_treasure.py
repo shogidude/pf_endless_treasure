@@ -259,6 +259,7 @@ class RandomFrame(ttk.Frame):
         self.tk_image = None
         self.current_files = {}
         self._resize_job = None
+        self._has_fit_once = False  # fit window size only on first successful generate
 
         # Layout
         self.topbar = ttk.Frame(self)
@@ -359,7 +360,13 @@ class RandomFrame(ttk.Frame):
                 "Front": front.name,
                 "Cropped Back": b_crop.name
             }
-            self.fit_window_to_image(self.fullres_image)
+            # Fit window size only once (on first render) to establish default size
+            if not self._has_fit_once:
+                self.fit_window_to_image(self.fullres_image)
+                self._has_fit_once = True
+            else:
+                # Keep current window size; just re-render to fit existing panel
+                self.render_for_display(self.fullres_image)
             self.update_status()
         except Exception as e:
             messagebox.showerror("Error generating treasure", str(e), parent=self)
@@ -469,6 +476,13 @@ class RandomFrame(ttk.Frame):
         # Clamp to screen just in case
         win_w = min(win_w, max_win_w)
         win_h = min(win_h, max_win_h)
+
+        # On the first sizing, make the window a bit shorter (~10%)
+        try:
+            if hasattr(self, "_has_fit_once") and self._has_fit_once is False:
+                win_h = max(300, int(win_h * 0.9))
+        except Exception:
+            pass
 
         # Apply and render
         # Apply to the toplevel window hosting this frame
@@ -915,6 +929,8 @@ class TreasureApp(tk.Tk):
         self.random_tab.fronts, self.random_tab.backs = scan_cards(folder)
         if len(self.random_tab.backs) >= 4 and len(self.random_tab.fronts) >= 1:
             self.random_tab.btn_new.state(["!disabled"])
+            # Reset first-fit so the window sizes once after selecting a folder
+            self.random_tab._has_fit_once = False
             self.random_tab.generate()
         else:
             self.random_tab.btn_new.state(["disabled"])
