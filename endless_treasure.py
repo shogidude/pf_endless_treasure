@@ -929,6 +929,7 @@ class AboutFrame(ttk.Frame):
         except tk.TclError:
             pass
         txt.insert(tk.END, content)
+        self._linkify(txt)
         txt.configure(state=tk.DISABLED)
 
     def _open_url(self, url: str):
@@ -950,6 +951,41 @@ class AboutFrame(ttk.Frame):
             webbrowser.open(path.as_uri())
         except Exception:
             messagebox.showinfo("LICENSE", str(path), parent=self)
+
+    def _linkify(self, text_widget: tk.Text):
+        # Style for links
+        text_widget.tag_configure("url", foreground="#4FA3FF", underline=True)
+        text_widget.tag_bind("url", "<Enter>", lambda e: text_widget.config(cursor="hand2"))
+        text_widget.tag_bind("url", "<Leave>", lambda e: text_widget.config(cursor=""))
+
+        def open_current_url(event):
+            index = text_widget.index(f"@{event.x},{event.y}")
+            # Find the tagged range under the cursor
+            ranges = list(text_widget.tag_ranges("url"))
+            for i in range(0, len(ranges), 2):
+                start = ranges[i]
+                end = ranges[i + 1]
+                if text_widget.compare(start, "<=", index) and text_widget.compare(index, "<", end):
+                    url = text_widget.get(start, end)
+                    self._open_url(url)
+                    break
+
+        text_widget.tag_bind("url", "<Button-1>", open_current_url)
+
+        # Regex find and apply tags
+        pattern = r"https?://[^\s)>\]}]+"
+        idx = "1.0"
+        count = tk.IntVar()
+        while True:
+            pos = text_widget.search(pattern, idx, stopindex=tk.END, regexp=True, count=count)
+            if not pos:
+                break
+            length = count.get() or 0
+            if length <= 0:
+                break
+            end = f"{pos}+{length}c"
+            text_widget.tag_add("url", pos, end)
+            idx = end
 
     def _build_content(self) -> str:
         # Load MIT license text
@@ -996,6 +1032,15 @@ class AboutFrame(ttk.Frame):
         add("—" * 32)
         add("If this app helps you, tips are appreciated: https://www.patreon.com/c/backroomsdotnet/membership")
         add("Need custom software or web work? Hire Valley Websites: https://valleywebsites.net/")
+        add("")
+        add("Some of my sites include ...")
+        add("Backrooms Wiki: https://backrooms.com/")
+        add("Backrooms Novel Game: https://backrooms.net/")
+        add("T. Gene Davis (Author): https://tgenedavis.com/")
+        add("The original OSR RPG: https://becmi.net/")
+        add("Japanese Chess (Shogi) game: https://japanesechess.org/")
+        add("Solo RPG: https://solorpg.net/")
+        add("Speculative Blog: https://freesciencefiction.com/")
         add("")
         add("Acknowledgments")
         add("—" * 32)
