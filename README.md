@@ -146,3 +146,21 @@ This project is free and will remain free under CUP. No support is offered by it
 ## Tips
 
 If you want to tip me for my work on this **PF Endless Treasure** software and encourage me to make more similar software, drop me a tip at: https://www.patreon.com/c/backroomsdotnet/membership
+
+Need custom software or web work? Hire Valley Websites: https://valleywebsites.net/
+
+Some of my sites include ...
+
+Backrooms Wiki: https://backrooms.com/
+
+Backrooms Novel Game: https://backrooms.net/
+
+T. Gene Davis (Author): https://tgenedavis.com/"
+
+The original OSR RPG: https://becmi.net/
+
+Japanese Chess (Shogi) game: https://japanesechess.org/
+
+Solo RPG: https://solorpg.net/
+
+Speculative Blog: https://freesciencefiction.com/
