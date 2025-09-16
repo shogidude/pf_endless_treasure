@@ -155,7 +155,7 @@ Backrooms Wiki: https://backrooms.com/
 
 Backrooms Novel Game: https://backrooms.net/
 
-T. Gene Davis (Author): https://tgenedavis.com/"
+T. Gene Davis (Author): https://tgenedavis.com/
 
 The original OSR RPG: https://becmi.net/
 
