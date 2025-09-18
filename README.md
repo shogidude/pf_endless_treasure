@@ -46,8 +46,13 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
 
 ## Features
 
-* **Two tabs: Random + Browser**
+* **Three tabs: Random + Custom + Browser**
   - Random: Compose a polished treasure layout from 4 backs + 1 front with soft shadows on felt.
+    - Buttons: New Treasure, Edit (Edit opens the Custom tab with fields pre-filled from the current random draw: Front → Front, Back #1 → Passive, Back #2 → Active, Back #3 → Quirk, Cropped Back → Plot Hook).
+  - Custom: Enter item numbers to pick each card and render a custom treasure.
+    - Fields: Front, Passive (Back #1), Active (Back #2), Quirk (Back #3), Plot Hook (cropped back panel).
+    - Buttons: Render, Sync Plot Hook (copy Quirk → Plot Hook), Random Front, Random Backs, Full Random.
+    - Enter in any field renders.
   - Browser: View single cards with the same styling; navigate by section or continuously through all cards.
 
 * **Random draws**
@@ -65,9 +70,9 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
   - Flip toggles between front/back of the current card when both are present.
 
 * **Keyboard shortcuts**
-  - Random tab: Space / N / Enter → New Treasure.
-  - Browser tab: Left/Right → Prev/Next, Home/End → First/Last in section, Ctrl+L → focus Item #.
-  - Enter (and keypad Enter) in Item # → jump to that item.
+  - Random: Space / N / Enter → New Treasure.
+  - Custom: Enter in a field → Render.
+  - Browser: Left/Right → Prev/Next, Home/End → First/Last in section, Ctrl+L → focus Item #; Enter in Item # → jump.
 
 * **Flexible image location**
   - CLI: `--cards /path/to/JPGs` to set the folder.
@@ -89,8 +94,9 @@ No DRM workarounds. No bundled Paizo content. Just fast, reproducible treasure r
 * It **does not** read or distribute Paizo text/art beyond the file paths you provide.
 
 Notes on indexing behavior:
-- Random tab uses cards numbered 21–220 (odd = fronts, even = backs).
-- Browser tab indexes 1–220 for section navigation. If a first card has no trailing number but a matching “2” (e.g., `…Cards2.jpg`) exists, the matching unnumbered file (e.g., `…Cards.jpg`) is treated as card 1.
+- Random uses item cards 21–220 (odd = fronts, even = backs).
+- Custom follows the same mapping. Item numbers 1–100 map to cards: 1 → 21/22, 2 → 23/24, … 100 → 219/220. The composer prefers front for Front, and back for back slots; it falls back to the paired side if one is missing.
+- Browser indexes 1–220 for section navigation. If a first card has no trailing number but a matching “2” (e.g., `…Cards2.jpg`) exists, the matching unnumbered file (e.g., `…Cards.jpg`) is treated as card 1.
 
 ---
 
@@ -155,7 +161,7 @@ Backrooms Wiki: https://backrooms.com/
 
 Backrooms Novel Game: https://backrooms.net/
 
-T. Gene Davis (Author): https://tgenedavis.com/"
+T. Gene Davis (Author): https://tgenedavis.com/
 
 The original OSR RPG: https://becmi.net/
 

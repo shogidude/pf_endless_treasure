@@ -264,6 +264,7 @@ class RandomFrame(ttk.Frame):
         self.fullres_image = None
         self.tk_image = None
         self.current_files = {}
+        self.current_paths = {}
         self._resize_job = None
         self._has_fit_once = False  # fit window size only on first successful generate
 
@@ -274,8 +275,13 @@ class RandomFrame(ttk.Frame):
         hdr = ttk.Label(self.topbar, text="Deck of Endless Treasure — Random Drawer", style="Header.TLabel")
         hdr.pack(side=tk.LEFT)
 
-        self.btn_new = ttk.Button(self.topbar, text="New Treasure", command=self.generate)
-        self.btn_new.pack(side=tk.RIGHT, padx=(8, 0))
+        # Right-side vertical button stack (New, Edit)
+        right = ttk.Frame(self.topbar)
+        right.pack(side=tk.RIGHT)
+        self.btn_new = ttk.Button(right, text="New Treasure", command=self.generate)
+        self.btn_new.pack(side=tk.TOP, padx=(8, 0))
+        self.btn_edit = ttk.Button(right, text="Edit", command=self._cmd_edit_to_custom)
+        self.btn_edit.pack(side=tk.TOP, padx=(8, 0), pady=(6, 0))
 
         self.image_panel = ttk.Frame(self)
         self.image_panel.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
@@ -296,9 +302,11 @@ class RandomFrame(ttk.Frame):
         # Initial render
         if len(self.backs) < 4 or len(self.fronts) < 1:
             self.btn_new.state(["disabled"])  # can't generate yet
+            self.btn_edit.state(["disabled"])  # can't edit yet
             self.show_empty_state()
         else:
             self.btn_new.state(["!disabled"])
+            self.btn_edit.state(["!disabled"])
             self.generate()
 
     def show_empty_state(self):
@@ -366,6 +374,13 @@ class RandomFrame(ttk.Frame):
                 "Front": front.name,
                 "Cropped Back": b_crop.name
             }
+            self.current_paths = {
+                "Back #1": b1,
+                "Back #2": b2,
+                "Back #3": b3,
+                "Front": front,
+                "Cropped Back": b_crop,
+            }
             # Fit window size only once (on first render) to establish default size
             if not self._has_fit_once:
                 self.fit_window_to_image(self.fullres_image)
@@ -376,6 +391,42 @@ class RandomFrame(ttk.Frame):
             self.update_status()
         except Exception as e:
             messagebox.showerror("Error generating treasure", str(e), parent=self)
+
+    def _card_num_from_path(self, p: Path):
+        try:
+            return extract_trailing_number(p)
+        except Exception:
+            return None
+
+    def _item_num_for_card(self, n: int):
+        if n is None:
+            return None
+        if 21 <= n <= 220:
+            odd = n if n % 2 == 1 else n - 1
+            return ((odd - 21) // 2) + 1
+        return None
+
+    def _cmd_edit_to_custom(self):
+        # Compute item numbers from the last generated selection and open Custom tab
+        if not self.current_paths:
+            return
+        get_item = lambda key: self._item_num_for_card(self._card_num_from_path(self.current_paths.get(key)))
+        front_item = get_item("Front")
+        b1_item = get_item("Back #1")
+        b2_item = get_item("Back #2")
+        b3_item = get_item("Back #3")
+        plot_item = get_item("Cropped Back")
+        try:
+            if hasattr(self.app, 'custom_tab') and self.app.custom_tab:
+                self.app.custom_tab.set_items(front_item=front_item, passive=b1_item, active=b2_item, quirk=b3_item, plot_hook=plot_item, render=True)
+                # Switch to the Custom tab
+                self.app.notebook.select(self.app.custom_tab)
+        except Exception:
+            # Fallback: just switch to Custom
+            try:
+                self.app.notebook.select(self.app.custom_tab)
+            except Exception:
+                pass
 
     # Keyboard helpers
     def _is_active(self):
@@ -899,6 +950,379 @@ def _load_rgba_card_cached(path: str) -> Image.Image:
     return im
 
 
+class CustomFrame(ttk.Frame):
+    """Compose a treasure from specific item numbers.
+
+    Lets you pick item numbers for:
+      - Front (prefers front; falls back to back if needed)
+      - Back #1, Back #2, Back #3 (prefer backs)
+      - Plot Hook (prefer back)
+
+    Uses the same layout and styling as the Random tab.
+    """
+
+    def __init__(self, master, app, folder: Path):
+        super().__init__(master)
+        self.app = app
+        self.folder = folder
+        self.index = index_all_cards(self.folder)
+
+        self.fullres_image = None
+        self.tk_image = None
+        self.image_label = None
+        self._resize_job = None
+        self._has_fit_once = False
+
+        # Top bar
+        self.topbar = ttk.Frame(self)
+        self.topbar.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(12, 8))
+        ttk.Label(self.topbar, text="Custom Treasure", style="Header.TLabel").pack(side=tk.LEFT)
+
+        # Inputs row
+        self.ctrl_row = ttk.Frame(self)
+        self.ctrl_row.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(0, 4))
+
+        def labeled_entry(parent, label, width=6):
+            f = ttk.Frame(parent)
+            f.pack(side=tk.LEFT, padx=(0, 12))
+            ttk.Label(f, text=label, style="Sub.TLabel").pack(side=tk.TOP, anchor="w")
+            var = tk.StringVar()
+            e = ttk.Entry(f, textvariable=var, width=width)
+            try:
+                e.configure(font=("Segoe UI", 10))
+            except tk.TclError:
+                pass
+            e.pack(side=tk.TOP)
+            return var, e
+
+        self.front_var, self.front_entry = labeled_entry(self.ctrl_row, "Front Item #")
+        self.b1_var, self.b1_entry = labeled_entry(self.ctrl_row, "Passive")
+        self.b2_var, self.b2_entry = labeled_entry(self.ctrl_row, "Active")
+        self.b3_var, self.b3_entry = labeled_entry(self.ctrl_row, "Quirk")
+        self.bc_var, self.bc_entry = labeled_entry(self.ctrl_row, "Plot Hook")
+
+        # Buttons row
+        btns = ttk.Frame(self)
+        btns.pack(side=tk.TOP, fill=tk.X, padx=14, pady=(0, 4))
+        self.btn_render = ttk.Button(btns, text="Render", command=self.render_custom, style="Toolbar.TButton")
+        self.btn_render.pack(side=tk.LEFT)
+        ttk.Button(btns, text="Sync Plot Hook", command=self._sync_plot_hook, style="Toolbar.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(btns, text="Random Backs", command=self._randomize_backs, style="Toolbar.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(btns, text="Random Front", command=self._random_front, style="Toolbar.TButton").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(btns, text="Full Random", command=self._full_random, style="Toolbar.TButton").pack(side=tk.LEFT, padx=(8, 0))
+
+        # Display area
+        self.image_panel = ttk.Frame(self)
+        self.image_panel.pack(fill=tk.BOTH, expand=True, padx=12, pady=8)
+        self.status = ttk.Label(self, text="", style="Sub.TLabel")
+        self.status.pack(side=tk.BOTTOM, anchor="w", padx=14, pady=(0, 10))
+
+        # Bindings
+        self.bind("<Configure>", self._on_resize)
+        for ent in (self.front_entry, self.b1_entry, self.b2_entry, self.b3_entry, self.bc_entry):
+            ent.bind("<Return>", lambda e: self.render_custom())
+            ent.bind("<KP_Enter>", lambda e: self.render_custom())
+
+        self._init_defaults()
+        self._try_initial_render()
+
+    def set_folder(self, folder: Path):
+        self.folder = folder
+        self.index = index_all_cards(self.folder)
+        self._try_initial_render()
+
+    def set_items(self, *, front_item=None, passive=None, active=None, quirk=None, plot_hook=None, render=True):
+        # Accept ints or strings; ignore None values
+        def set_if(var, value):
+            if value is None:
+                return
+            try:
+                n = int(value)
+            except Exception:
+                return
+            var.set(str(n))
+        set_if(self.front_var, front_item)
+        set_if(self.b1_var, passive)
+        set_if(self.b2_var, active)
+        set_if(self.b3_var, quirk)
+        set_if(self.bc_var, plot_hook)
+        if render:
+            self.render_custom()
+
+    # Availability helpers
+    def _available_items_any(self):
+        items = []
+        for item in range(1, 101):
+            if self._path_for_item(item, prefer_front=True) or self._path_for_item(item, prefer_front=False):
+                items.append(item)
+        return items
+
+    def _available_items_with_back(self):
+        items = []
+        for item in range(1, 101):
+            if self._path_for_item(item, prefer_front=False):
+                items.append(item)
+        return items
+
+    def _init_defaults(self):
+        any_items = self._available_items_any()
+        back_items = self._available_items_with_back()
+        self.front_var.set(str(any_items[0] if any_items else 1))
+        if len(back_items) >= 3:
+            self.b1_var.set(str(back_items[0]))
+            self.b2_var.set(str(back_items[1]))
+            self.b3_var.set(str(back_items[2]))
+            self.bc_var.set(str(back_items[0]))
+        elif back_items:
+            self.b1_var.set(str(back_items[0]))
+            self.b2_var.set(str(back_items[min(1, len(back_items)-1)]))
+            self.b3_var.set(str(back_items[min(2, len(back_items)-1)]))
+            self.bc_var.set(str(back_items[0]))
+        else:
+            self.b1_var.set("1"); self.b2_var.set("2"); self.b3_var.set("3"); self.bc_var.set("1")
+
+    def _try_initial_render(self):
+        if self._available_items_with_back() and self._available_items_any():
+            try:
+                self.render_custom()
+            except Exception:
+                self._show_empty_state()
+        else:
+            self._show_empty_state()
+
+    def _show_empty_state(self):
+        for child in self.image_panel.winfo_children():
+            child.destroy()
+        c = ttk.Frame(self.image_panel, padding=32)
+        c.pack(fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(c, padding=16)
+        inner.pack(expand=True)
+        ttk.Label(inner, text="Select a folder with valid JPGs to render.", style="Sub.TLabel").pack(pady=(0, 10))
+        ttk.Button(inner, text="Select Folder…", command=self._delegate_folder_dialog).pack()
+        self.status.configure(text="")
+
+    def _delegate_folder_dialog(self):
+        if hasattr(self.app, "random_tab"):
+            self.app.random_tab.select_folder_via_dialog()
+
+    def _parse_item(self, s: str):
+        try:
+            n = int(s.strip())
+        except Exception:
+            return None
+        return n if 1 <= n <= 100 else None
+
+    def _front_card_num_for_item(self, item: int):
+        return 21 + (item - 1) * 2
+
+    def _path_for_item(self, item: int, prefer_front: bool):
+        front = self._front_card_num_for_item(item)
+        back = front + 1
+        if prefer_front:
+            return self.index.get(front) or self.index.get(back)
+        else:
+            return self.index.get(back) or self.index.get(front)
+
+    def _on_resize(self, event):
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(80, self._do_resize)
+
+    def _do_resize(self):
+        self._resize_job = None
+        if self.fullres_image is not None:
+            self.render_for_display(self.fullres_image)
+
+    def _rand_sample_backs(self, k=3):
+        pool = self._available_items_with_back()
+        if len(pool) >= k:
+            return random.sample(pool, k)
+        elif pool:
+            out = []
+            idx = 0
+            while len(out) < k:
+                out.append(pool[idx % len(pool)])
+                idx += 1
+            return out
+        else:
+            return [1, 2, 3]
+
+    def _randomize_backs(self):
+        b1, b2, b3 = self._rand_sample_backs(3)
+        self.b1_var.set(str(b1))
+        self.b2_var.set(str(b2))
+        self.b3_var.set(str(b3))
+        self.bc_var.set(str(b1))
+        self.render_custom()
+
+    def _available_items_with_front(self):
+        items = []
+        for item in range(1, 101):
+            n = self._front_card_num_for_item(item)
+            if n in self.index:
+                items.append(item)
+        return items
+
+    def _random_front(self):
+        pool = self._available_items_with_front()
+        if not pool:
+            pool = self._available_items_any()
+        if not pool:
+            messagebox.showwarning("No items", "No items available to set as Front.", parent=self)
+            return
+        self.front_var.set(str(random.choice(pool)))
+        self.render_custom()
+
+    def _full_random(self):
+        # Randomize front and backs together
+        pool_f = self._available_items_with_front() or self._available_items_any()
+        pool_b = self._available_items_with_back()
+        if not pool_f or not pool_b:
+            messagebox.showwarning("Not enough images", "Need at least one front and some backs to randomize.", parent=self)
+            return
+        self.front_var.set(str(random.choice(pool_f)))
+        b1, b2, b3 = self._rand_sample_backs(3)
+        self.b1_var.set(str(b1))
+        self.b2_var.set(str(b2))
+        self.b3_var.set(str(b3))
+        self.bc_var.set(str(b1))
+        self.render_custom()
+
+    def _sync_plot_hook(self):
+        # Copy the Quirk item number into Plot Hook
+        item = self._parse_item(self.b3_var.get()) or 1
+        self.bc_var.set(str(item))
+        self.render_custom()
+
+    def render_custom(self):
+        labels = [
+            ("Front", self.front_var.get(), True),
+            ("Back #1", self.b1_var.get(), False),
+            ("Back #2", self.b2_var.get(), False),
+            ("Back #3", self.b3_var.get(), False),
+            ("Plot Hook", self.bc_var.get(), False),
+        ]
+        resolved = {}
+        missing = []
+        for name, txt, prefer_front in labels:
+            item = self._parse_item(txt)
+            if item is None:
+                missing.append(f"{name}: invalid item # '{txt}' (1–100)")
+                continue
+            path = self._path_for_item(item, prefer_front=prefer_front)
+            if not path:
+                side = "front" if prefer_front else "back"
+                missing.append(f"{name}: item {item} has no {side} card found")
+            else:
+                resolved[name] = (item, path)
+
+        if missing:
+            messagebox.showwarning("Missing cards", "\n".join(missing), parent=self)
+            if not self.fullres_image:
+                self._show_empty_state()
+            return
+
+        back1 = resolved["Back #1"][1]
+        back2 = resolved["Back #2"][1]
+        back3 = resolved["Back #3"][1]
+        back_crop = resolved["Plot Hook"][1]
+        front = resolved["Front"][1]
+
+        self.fullres_image = compose_treasure(back1, back2, back3, back_crop, front)
+
+        if not self._has_fit_once:
+            self.fit_window_to_image(self.fullres_image)
+            self._has_fit_once = True
+        else:
+            self.render_for_display(self.fullres_image)
+
+        def card_num(p: Path):
+            m = extract_trailing_number(p)
+            return str(m) if m is not None else p.name
+
+        summary = [
+            f"Front: item {resolved['Front'][0]} (#{card_num(resolved['Front'][1])})",
+            f"Passive: item {resolved['Back #1'][0]} (#{card_num(resolved['Back #1'][1])})",
+            f"Active: item {resolved['Back #2'][0]} (#{card_num(resolved['Back #2'][1])})",
+            f"Quirk: item {resolved['Back #3'][0]} (#{card_num(resolved['Back #3'][1])})",
+            f"Plot Hook: item {resolved['Plot Hook'][0]} (#{card_num(resolved['Plot Hook'][1])})",
+        ]
+        self.status.configure(text="  • " + " | ".join(summary))
+
+    # Display helpers
+    def render_for_display(self, im: Image.Image):
+        if self.image_label is None or not self.image_label.winfo_exists():
+            for child in self.image_panel.winfo_children():
+                child.destroy()
+            self.image_label = ttk.Label(self.image_panel)
+            self.image_label.pack(fill=tk.BOTH, expand=True)
+
+        panel_w = self.image_panel.winfo_width()
+        panel_h = self.image_panel.winfo_height()
+        if panel_w <= 1 or panel_h <= 1:
+            panel_w = max(self.winfo_width() - 40, 200)
+            panel_h = max(self.winfo_height() - 160, 200)
+
+        scale = min(panel_w / im.width, panel_h / im.height, 1.0)
+        new_w = max(1, int(im.width * scale))
+        new_h = max(1, int(im.height * scale))
+        disp = im if (new_w == im.width and new_h == im.height) else im.resize((new_w, new_h), Image.LANCZOS)
+
+        self.tk_image = ImageTk.PhotoImage(disp)
+        self.image_label.configure(image=self.tk_image)
+
+    def fit_window_to_image(self, im: Image.Image):
+        self.update_idletasks()
+
+        PADX_TOPBAR = 14
+        PADY_TOPBAR = (12, 8)
+        PADX_PANEL = 12
+        PADY_PANEL = 8
+        PADX_STATUS = 14
+        PADY_STATUS = (0, 10)
+
+        topbar_w = getattr(self, 'topbar', self).winfo_reqwidth()
+        topbar_h = getattr(self, 'topbar', self).winfo_reqheight()
+        status_w = self.status.winfo_reqwidth()
+        status_h = self.status.winfo_reqheight()
+
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        max_win_w = max(400, screen_w - 40)
+        max_win_h = max(300, screen_h - 80)
+
+        # Include control rows in overhead height
+        ctrl_h = self.ctrl_row.winfo_reqheight() + 32
+        overhead_h = (topbar_h + PADY_TOPBAR[0] + PADY_TOPBAR[1]) + ctrl_h + (PADY_PANEL * 2) + (status_h + PADY_STATUS[0] + PADY_STATUS[1])
+
+        non_img_row_w = max(topbar_w + PADX_TOPBAR * 2, status_w + PADX_STATUS * 2)
+
+        max_img_w = max_win_w
+        max_img_h = max_win_h - overhead_h
+        max_img_h = max(100, max_img_h)
+
+        scale = min(max_img_w / im.width, max_img_h / im.height, 1.0)
+        disp_w = max(1, int(im.width * scale))
+        disp_h = max(1, int(im.height * scale))
+
+        win_w = max(disp_w + PADX_PANEL * 2, non_img_row_w)
+        win_h = overhead_h + disp_h
+
+        win_w = min(win_w, max_win_w)
+        win_h = min(win_h, max_win_h)
+
+        try:
+            if hasattr(self, "_has_fit_once") and self._has_fit_once is False:
+                win_h = max(300, int(win_h * 0.9))
+        except Exception:
+            pass
+
+        toplevel = self.winfo_toplevel()
+        toplevel.geometry(f"{win_w}x{win_h}")
+        toplevel.update_idletasks()
+        self.render_for_display(im)
+
+
 class AboutFrame(ttk.Frame):
     def __init__(self, master, app):
         super().__init__(master)
@@ -1080,9 +1504,11 @@ class TreasureApp(tk.Tk):
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         self.random_tab = RandomFrame(self.notebook, app=self, folder=self.folder)
+        self.custom_tab = CustomFrame(self.notebook, app=self, folder=self.folder)
         self.browser_tab = BrowserFrame(self.notebook, app=self, folder=self.folder)
         self.about_tab = AboutFrame(self.notebook, app=self)
         self.notebook.add(self.random_tab, text="Random")
+        self.notebook.add(self.custom_tab, text="Custom")
         self.notebook.add(self.browser_tab, text="Browser")
         self.notebook.add(self.about_tab, text="About")
 
@@ -1093,14 +1519,19 @@ class TreasureApp(tk.Tk):
         self.random_tab.fronts, self.random_tab.backs = scan_cards(folder)
         if len(self.random_tab.backs) >= 4 and len(self.random_tab.fronts) >= 1:
             self.random_tab.btn_new.state(["!disabled"])
+            self.random_tab.btn_edit.state(["!disabled"])
             # Reset first-fit so the window sizes once after selecting a folder
             self.random_tab._has_fit_once = False
             self.random_tab.generate()
         else:
             self.random_tab.btn_new.state(["disabled"])
+            self.random_tab.btn_edit.state(["disabled"])
             self.random_tab.show_empty_state()
         # Update Browser tab
         self.browser_tab.set_folder(folder)
+        # Update Custom tab
+        if hasattr(self, 'custom_tab'):
+            self.custom_tab.set_folder(folder)
 
 
 def main():
@@ -1109,7 +1540,7 @@ def main():
     parser = argparse.ArgumentParser(
         prog="endless_treasure.py",
         description=(
-            "Deck of Endless Treasure — Random Drawer and Browser. "
+            "Deck of Endless Treasure — Random Drawer, Custom Composer, and Browser. "
             "Provide a folder of JPG/JPEG images whose filenames end in numbers 1–220. "
             "Odd numbers are fronts; even numbers are backs. If --cards is omitted or the folder "
             "does not contain enough images for random draw, a folder picker will be shown."
